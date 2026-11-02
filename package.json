@@ -1,0 +1,17 @@
+{
+  "name": "watch-together",
+  "version": "1.0.0",
+  "description": "Watch a video file with a friend in sync, with video chat. Files go peer-to-peer.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.22.1"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true
+}

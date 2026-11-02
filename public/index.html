@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Watch Together</title>
+  <meta name="description" content="Watch a video file with a friend, in sync, with video chat." />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- ============ LANDING ============ -->
+  <main id="landing" class="landing" hidden>
+    <div class="landing-inner">
+      <div class="brand"><span class="brand-dot"></span>Watch Together</div>
+      <h1>Same movie.<br />Same second.<br /><em>Different sofas.</em></h1>
+      <p class="lede">Open a video file, send it to a friend, and watch it in perfect sync with your cameras and mics on. Pause for one, it pauses for both.</p>
+
+      <div class="start-card">
+        <label class="field">
+          <span>Your name</span>
+          <input id="landingName" maxlength="32" placeholder="e.g. Joe" autocomplete="nickname" />
+        </label>
+        <button id="createRoom" class="btn btn-primary btn-lg">Start a room</button>
+        <div class="or"><span>or join one</span></div>
+        <form id="joinForm" class="join-row">
+          <input id="joinCode" placeholder="room code or link" autocomplete="off" />
+          <button class="btn">Join</button>
+        </form>
+      </div>
+
+      <ol class="steps">
+        <li><b>Start a room</b> and send your friend the link.</li>
+        <li><b>Open your video.</b> Send it to them straight from your browser, or each open your own copy.</li>
+        <li><b>Press play.</b> Play, pause and skipping stay in sync for both of you.</li>
+      </ol>
+      <p class="fineprint">The video goes directly between your two browsers. It is never uploaded to a server.</p>
+    </div>
+  </main>
+
+  <!-- ============ ROOM ============ -->
+  <div id="room" class="room" hidden>
+    <header class="topbar">
+      <a class="brand" href="/"><span class="brand-dot"></span>Watch Together</a>
+      <div class="room-meta">
+        <span class="room-code" id="roomCode"></span>
+        <button id="copyLink" class="btn btn-sm">Copy invite link</button>
+      </div>
+      <div id="peerStatus" class="status-pill"><span class="dot"></span><span class="txt">Connecting…</span></div>
+    </header>
+
+    <div class="room-grid">
+      <!-- Stage: the movie, its controls, and floating cams -->
+      <section id="stage" class="stage">
+        <video id="movie" playsinline preload="auto"></video>
+
+        <div id="emptyState" class="empty-state">
+          <div class="empty-inner">
+            <div class="reel" aria-hidden="true"></div>
+            <h2>Open a video to get started</h2>
+            <p>Drag a file here, or</p>
+            <label class="btn btn-primary">
+              Choose video file
+              <input id="fileInput" type="file" accept="video/*,.mkv,.mp4,.m4v,.webm,.mov" hidden />
+            </label>
+            <p class="muted small">MKV, MP4 and WebM work best in Chrome or Edge.</p>
+          </div>
+        </div>
+
+        <div id="receivingState" class="empty-state" hidden>
+          <div class="empty-inner">
+            <h2>Receiving <span id="recvName"></span></h2>
+            <div class="progress big"><div id="recvBar"></div></div>
+            <p id="recvStats" class="muted"></p>
+            <button id="recvCancel" class="btn btn-sm">Cancel</button>
+          </div>
+        </div>
+
+        <div id="errorPanel" class="error-panel" hidden></div>
+        <div id="audioWarn" class="audio-warn" hidden></div>
+
+        <div id="dropHint" class="drop-hint" hidden>Drop to open</div>
+        <div id="toasts" class="toasts" aria-live="polite"></div>
+        <button id="bigPlay" class="big-play" hidden aria-label="Play">
+          <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+
+        <!-- floating camera dock -->
+        <div id="camDock" class="cam-dock" hidden>
+          <div class="cam-handle" title="Drag to move"></div>
+          <div class="tile remote" id="remoteTile">
+            <video id="remoteVideo" playsinline autoplay></video>
+            <div class="avatar" id="remoteAvatar"></div>
+            <span class="tile-label" id="remoteLabel">Friend</span>
+            <span class="tile-mute" id="remoteMuted" hidden>mic off</span>
+            <button class="tile-unblock" id="remoteUnblock" hidden>Tap to hear</button>
+          </div>
+          <div class="tile local" id="localTile">
+            <video id="localVideo" playsinline autoplay muted></video>
+            <div class="avatar" id="localAvatar"></div>
+            <span class="tile-label">You</span>
+          </div>
+        </div>
+
+        <!-- controls -->
+        <div id="controls" class="controls" hidden>
+          <div class="seek-wrap">
+            <div class="seek-track"><div id="seekBuffered" class="seek-buffered"></div><div id="seekFill" class="seek-fill"></div></div>
+            <input id="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Seek" />
+            <div id="seekTip" class="seek-tip" hidden></div>
+          </div>
+          <div class="ctrl-row">
+            <button id="playBtn" class="icon-btn" aria-label="Play (space)" title="Play / pause (space)">
+              <svg class="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              <svg class="i-pause" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+            </button>
+            <button id="backBtn" class="icon-btn" aria-label="Back 10 seconds" title="Back 10s (←)">
+              <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/><text x="12" y="16.2" text-anchor="middle" font-size="6.5" font-weight="700">10</text></svg>
+            </button>
+            <button id="fwdBtn" class="icon-btn" aria-label="Forward 10 seconds" title="Forward 10s (→)">
+              <svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/><text x="12" y="16.2" text-anchor="middle" font-size="6.5" font-weight="700">10</text></svg>
+            </button>
+            <div class="vol">
+              <button id="muteBtn" class="icon-btn" aria-label="Mute movie (m)" title="Mute (m)">
+                <svg class="i-vol" viewBox="0 0 24 24"><path d="M4 9v6h4l5 5V4L8 9H4zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+                <svg class="i-muted" viewBox="0 0 24 24"><path d="M4 9v6h4l5 5V4L8 9H4zm15.6 3 2.2-2.2-1.4-1.4-2.2 2.2-2.2-2.2-1.4 1.4 2.2 2.2-2.2 2.2 1.4 1.4 2.2-2.2 2.2 2.2 1.4-1.4z"/></svg>
+              </button>
+              <input id="volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Movie volume" />
+            </div>
+            <span id="timeLabel" class="time">0:00 / 0:00</span>
+            <span class="spacer"></span>
+            <span id="syncBadge" class="sync-badge" hidden title="Playback is synced with your friend">● synced</span>
+            <button id="subsBtn" class="icon-btn" aria-label="Subtitles" title="Load subtitles (.srt / .vtt)">
+              <svg viewBox="0 0 24 24"><path d="M3 5h18v14H3zM5 7v10h14V7zm2 4h4v2H7zm6 0h4v2h-4zm-6 3h6v2H7zm8 0h2v2h-2z"/></svg>
+            </button>
+            <input id="subsInput" type="file" accept=".srt,.vtt" hidden />
+            <button id="camsBtn" class="icon-btn" aria-label="Show or hide cameras" title="Show / hide cameras (c)">
+              <svg viewBox="0 0 24 24"><path d="M15 8v8H3V8h12m1-2H2v12h15v-4.5l5 4V6.5l-5 4V6z"/></svg>
+            </button>
+            <button id="fsBtn" class="icon-btn" aria-label="Fullscreen (f)" title="Fullscreen (f)">
+              <svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4zm10 0h6v6h-2V6h-4zM4 14h2v4h4v2H4zm14 0h2v6h-6v-2h4z"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Side panel -->
+      <aside class="panel">
+        <div class="card">
+          <h3>Video</h3>
+          <div class="file-row">
+            <span class="who">You</span>
+            <span id="myFile" class="file-name muted">Nothing open</span>
+            <label class="btn btn-sm" id="changeFileBtn" hidden>
+              Change
+              <input id="fileInput2" type="file" accept="video/*,.mkv,.mp4,.m4v,.webm,.mov" hidden />
+            </label>
+          </div>
+          <div class="file-row">
+            <span class="who" id="peerWho">Friend</span>
+            <span id="peerFile" class="file-name muted">Not here yet</span>
+          </div>
+          <div id="matchNote" class="note" hidden></div>
+          <button id="sendFileBtn" class="btn btn-primary btn-block" hidden>Send video to friend</button>
+          <div id="sendProgress" class="transfer" hidden>
+            <div class="progress"><div id="sendBar"></div></div>
+            <div class="transfer-row"><span id="sendStats" class="muted small"></span><button id="sendCancel" class="btn btn-sm">Cancel</button></div>
+          </div>
+          <a id="saveCopy" class="btn btn-block" hidden>Save a copy to this computer</a>
+        </div>
+
+        <div class="card">
+          <h3>Call</h3>
+          <div id="callIdle">
+            <button id="joinCall" class="btn btn-primary btn-block">Turn on camera &amp; mic</button>
+            <p class="muted small">Tip: wear headphones so your mic doesn't pick up the movie.</p>
+          </div>
+          <div id="callActive" hidden>
+            <div class="call-row">
+              <button id="micBtn" class="btn btn-toggle on">Mic on</button>
+              <button id="camBtn" class="btn btn-toggle on">Camera on</button>
+              <button id="hangupBtn" class="btn btn-danger">Leave call</button>
+            </div>
+          </div>
+          <label class="slider-row">
+            <span>Friend's voice</span>
+            <input id="peerVolume" type="range" min="0" max="1" step="0.01" value="1" />
+          </label>
+        </div>
+
+        <div class="card chat-card">
+          <h3>Chat</h3>
+          <div id="chatLog" class="chat-log"></div>
+          <form id="chatForm" class="chat-form">
+            <input id="chatInput" maxlength="500" placeholder="Say something…" autocomplete="off" />
+            <button class="btn btn-sm">Send</button>
+          </form>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- ============ MODALS ============ -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div id="modalBody"></div>
+      <div id="modalActions" class="modal-actions"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
