@@ -21,37 +21,52 @@ npm start
 
 Open http://localhost:3000, start a room, and open the invite link in a second browser window (or a private window) to try it with yourself.
 
-## Put it online
+## Put it online for free (Render)
 
-Cameras and microphones only work on `https://` sites (or `localhost`), so it needs to be hosted somewhere with HTTPS. Any host that runs a Node.js app and supports WebSockets works, for example [Render](https://render.com), [Railway](https://railway.app) or [Fly.io](https://fly.io):
+Cameras and microphones only work on `https://` sites, so it needs hosting. [Render](https://render.com)'s free plan is enough: the server only introduces the two browsers and relays tiny sync messages. No credit card needed.
 
-- **Build command:** `npm install`
-- **Start command:** `npm start`
-- The app listens on the `PORT` environment variable that these hosts provide.
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/degujoe/watch-together)
 
-A `Dockerfile` is included if your host prefers containers.
+1. Sign up at [render.com](https://render.com) with **Sign in with GitHub**.
+2. Click the **Deploy to Render** button above. Render reads `render.yaml` from this repo (free plan, Frankfurt).
+3. Click **Deploy Blueprint** (or **Apply**). The first build takes 2–3 minutes.
+4. Your site is at `https://watch-together-xxxx.onrender.com`. Open it, start a room, and send the invite link.
 
-The server does very little work (it just introduces the two browsers and relays small sync messages), so the smallest free or cheapest plan is plenty.
+Things to know about the free plan:
 
-### TURN server (recommended)
+- After **15 minutes with nobody connected**, it goes to sleep. The next visit takes **about a minute** to wake it up, so open the site a minute before you want to start. While either of you has a room open, it stays awake.
+- New pushes to this repo redeploy automatically.
 
-The video, camera and file transfer go directly between the two browsers. That works on most home networks, but some networks (strict routers, mobile data, office or university Wi-Fi) block direct connections. When that happens, sync and chat still work but camera and sending the file don't, and the chat will say so.
+Any other host that runs Node.js with WebSockets also works (Railway, Fly.io, a VPS). Build with `npm ci`, start with `npm start`; the app uses the `PORT` environment variable. A `Dockerfile` is included.
 
-The fix is a TURN relay server. You can get one free or cheaply from services such as [Metered](https://www.metered.ca/stun-turn) or [Cloudflare Calls](https://developers.cloudflare.com/calls/turn/), or run your own with [coturn](https://github.com/coturn/coturn). Then set these environment variables on your host:
+### Free relay for when the connection fails (Cloudflare TURN)
+
+The video, cameras and file transfer go directly between your two browsers. That works on most home broadband, but some networks (mobile data, hotspots, university or office Wi-Fi, some routers) block direct connections. Then sync and chat still work, but cameras and file sending don't, and the chat says *"Could not make a direct connection"*.
+
+The fix is a TURN relay, which passes the traffic through a server instead. Cloudflare's is **free up to 1,000 GB a month** (a 2-hour video call through the relay is roughly 1–2 GB, and sending a movie is 2–10 GB):
+
+1. Make a free account at [dash.cloudflare.com](https://dash.cloudflare.com).
+2. In the sidebar, go to **Realtime** → **TURN Server** (it may be under *Calls*) and click **Create**. Give it any name.
+3. Copy the **Turn Token ID** and **API Token** it shows you.
+4. In Render, open your service → **Environment** → add these two variables, then save (it redeploys itself):
 
 ```
-TURN_URL=turn:your.turn.server:3478,turns:your.turn.server:5349
-TURN_USERNAME=...
-TURN_CREDENTIAL=...
+CF_TURN_KEY_ID=<Turn Token ID>
+CF_TURN_API_TOKEN=<API Token>
 ```
 
-Or provide the whole list yourself as JSON:
+The server then fetches short-lived relay credentials from Cloudflare automatically. Direct connections are still tried first; the relay is only used when they fail.
 
-```
-ICE_SERVERS=[{"urls":"stun:stun.l.google.com:19302"},{"urls":"turn:...","username":"...","credential":"..."}]
-```
+Other TURN options: set `TURN_URL` (comma-separated), `TURN_USERNAME` and `TURN_CREDENTIAL` for any TURN server (such as [Metered](https://www.metered.ca/stun-turn) or your own [coturn](https://github.com/coturn/coturn)), or `ICE_SERVERS` to a full JSON list.
 
-Note that anything going through TURN uses that server's bandwidth, and a full movie is several GB.
+## Watching across the world
+
+It's built to work long-distance, such as UK ↔ Korea:
+
+- **Sync allows for the delay.** The app measures the round trip between you (often 250–300 ms between Europe and East Asia) and adds half of it when following the other person's play or skip, so you stay within a few hundredths of a second.
+- **Calls will have the normal international delay** of about a quarter of a second, like any video call that distance. Wear headphones so the movie doesn't echo through your mic.
+- **Sending a movie takes a while.** Speed is usually limited by the sender's *upload* speed. On 20 Mbit/s upload a 4 GB movie takes roughly half an hour, and both tabs have to stay open the whole time. For big files it's often easier to put the file on Google Drive or similar beforehand, let both people download it, and each open your own copy. The app syncs that just the same.
+- **Use a laptop or desktop with Chrome or Edge** on both ends. Phones (especially iPhones) can't play most MKV files.
 
 ## Which files play?
 

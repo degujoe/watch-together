@@ -152,6 +152,8 @@ const S = {
   fileInfo: null,
   rtt: 0.1,
   seekLatency: 0.15, // how long this computer takes to seek; learned as we go
+  lastJump: 0,
+  hasState: false, // true once this player has been played/synced, so its position means something
   seekStartedAt: 0,
   lastLocalAction: -1e9,
   lastRemoteApply: -1e9,
@@ -302,7 +304,9 @@ function handleMsg(msg) {
       onTick(msg);
       break;
     case 'state-request':
-      if (S.fileReady) sendMsg({ type: 'state', time: video.currentTime, playing: isPlaying() });
+      // A player that has only just been opened (sitting at 0:00) isn't an authority;
+      // answering would drag the other person back to the start.
+      if (S.fileReady && S.hasState) sendMsg({ type: 'state', time: video.currentTime, playing: isPlaying() });
       break;
     case 'state':
       if (S.fileReady) {
@@ -319,7 +323,11 @@ function handleMsg(msg) {
       break;
     case 'pong': {
       const rtt = (now() - msg.t) / 1000;
-      if (rtt >= 0 && rtt < 5) S.rtt = S.rtt * 0.7 + rtt * 0.3;
+      if (rtt >= 0 && rtt < 5) {
+        // Take the first few measurements at face value, then smooth.
+        S.rttSamples = (S.rttSamples || 0) + 1;
+        S.rtt = S.rttSamples <= 2 ? (S.rttSamples === 1 ? rtt : (S.rtt + rtt) / 2) : S.rtt * 0.7 + rtt * 0.3;
+      }
       break;
     }
 
@@ -356,6 +364,8 @@ function handleMsg(msg) {
 function onPeerPresent(peer) {
   S.peer = { id: peer.id, name: peer.name, file: null, media: null };
   setStatus('ok', `With ${peer.name}`);
+  S.rttSamples = 0;
+  for (const ms of [0, 400, 1000]) setTimeout(() => sendMsg({ type: 'ping', t: now() }), ms);
   sendMsg({ type: 'hello', name: S.name, file: S.fileReady ? S.fileInfo : null, media: mediaState() });
   if (S.fileReady) sendMsg({ type: 'state-request' });
   createPC();
@@ -601,6 +611,7 @@ function loadVideo(file) {
   if (S.fileUrl) URL.revokeObjectURL(S.fileUrl);
   S.file = file;
   S.fileReady = false;
+  S.hasState = false;
   S.fileInfo = null;
   sendMsg({ type: 'file-info', file: null });
   S.audioChecked = false;
@@ -629,6 +640,7 @@ function onVideoReady() {
 
 function sendControl(action) {
   S.lastLocalAction = now();
+  S.hasState = true;
   const playing = action === 'play' ? true : action === 'pause' ? false : isPlaying();
   sendMsg({ type: 'control', action, time: video.currentTime, playing });
   if (S.peer && !S.peer.file && action === 'play') toast(`${S.peer.name} hasn't opened the video yet`);
@@ -671,10 +683,14 @@ function onRemoteControl(msg) {
 /** Jump to where the other person is, accounting for network delay. */
 function applyState(time, playing, extra = 0) {
   if (!S.fileReady) return;
+  S.hasState = true;
   let target = time + (playing ? oneWay() + extra : 0);
   if (video.duration) target = Math.min(target, video.duration - 0.05);
   video.playbackRate = 1;
-  if (Math.abs(video.currentTime - target) > 0.25) {
+  if (!playing && !video.paused) video.pause();
+  // While playing, small gaps are left to the gentle speed nudge. When paused,
+  // line up exactly so both screens show the same frame.
+  if (Math.abs(video.currentTime - target) > (playing ? 0.25 : 0.03)) {
     video.currentTime = playing ? target + S.seekLatency : target;
   }
   if (playing && video.paused) {
@@ -687,8 +703,6 @@ function applyState(time, playing, extra = 0) {
         toast('Click play to catch up');
       }
     );
-  } else if (!playing && !video.paused) {
-    video.pause();
   }
 }
 
@@ -700,7 +714,7 @@ function catchUp() {
 
 /** Host → guest heartbeat. */
 function hostTick() {
-  if (S.role !== 'host' || !S.peer || !S.fileReady) return;
+  if (S.role !== 'host' || !S.peer || !S.fileReady || !S.hasState) return;
   sendMsg({ type: 'tick', time: video.currentTime, playing: isPlaying() });
 }
 
@@ -720,9 +734,13 @@ function onTick(msg) {
   if (msg.playing) {
     const a = Math.abs(drift);
     if (a > 0.6) {
-      // Far off: jump. Seeking takes a moment, so aim a little ahead.
+      // Far off: jump. Seeking takes a moment, so aim a little ahead. If the last
+      // jump still left us off, learn from that and aim further next time.
+      if (t - S.lastJump < 4000) S.seekLatency = Math.min(3, Math.max(0, S.seekLatency - drift));
       video.currentTime = expected + S.seekLatency;
       video.playbackRate = 1;
+      S.lastJump = t;
+      S.lastRemoteApply = t; // let the seek settle before judging again
     } else if (a > 0.08) {
       // Close: speed up or slow down slightly (inaudible with pitch correction)
       // to close about half the gap each second.
@@ -730,7 +748,7 @@ function onTick(msg) {
     } else {
       video.playbackRate = 1;
     }
-  } else if (Math.abs(drift) > 0.3) {
+  } else if (Math.abs(drift) > 0.05) {
     video.currentTime = expected;
   }
   sendMsg({ type: 'drift', value: drift });

@@ -1,0 +1,12 @@
+# One-click deploy to Render's free plan.
+# See README → "Put it online for free".
+services:
+  - type: web
+    name: watch-together
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit

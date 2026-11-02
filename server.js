@@ -15,7 +15,51 @@ const MAX_PER_ROOM = 2;
 const ROOM_RE = /^[a-z0-9-]{3,48}$/;
 
 // ---------- ICE (STUN/TURN) config handed to browsers ----------
-function iceServers() {
+// Three ways to add a TURN relay (for networks that block direct connections):
+//   1. Cloudflare (free up to 1,000 GB/month): CF_TURN_KEY_ID + CF_TURN_API_TOKEN
+//   2. Any TURN server: TURN_URL + TURN_USERNAME + TURN_CREDENTIAL
+//   3. A full JSON list: ICE_SERVERS
+const STUN_DEFAULT = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
+const CF_KEY_ID = (process.env.CF_TURN_KEY_ID || '').trim();
+const CF_TOKEN = (process.env.CF_TURN_API_TOKEN || '').trim();
+const CF_TTL = 24 * 60 * 60; // credentials last 24h; we refresh them every 12h
+let cfCache = { servers: null, expires: 0, pending: null };
+
+async function cloudflareIce() {
+  if (cfCache.servers && Date.now() < cfCache.expires) return cfCache.servers;
+  if (cfCache.pending) return cfCache.pending;
+  cfCache.pending = (async () => {
+    try {
+      const res = await fetch(
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(CF_KEY_ID)}/credentials/generate-ice-servers`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${CF_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ttl: CF_TTL }),
+          signal: AbortSignal.timeout(8000),
+        }
+      );
+      if (!res.ok) throw new Error(`Cloudflare TURN API returned ${res.status}`);
+      const data = await res.json();
+      // Browsers block port 53, so drop those URLs rather than waiting for them to time out.
+      const servers = (data.iceServers || [])
+        .map((s) => ({ ...s, urls: [].concat(s.urls).filter((u) => !/:53(\?|$)/.test(u)) }))
+        .filter((s) => s.urls.length);
+      if (!servers.length) throw new Error('Cloudflare TURN API returned no servers');
+      cfCache.servers = servers;
+      cfCache.expires = Date.now() + (CF_TTL / 2) * 1000;
+      return servers;
+    } catch (e) {
+      console.warn('Could not get Cloudflare TURN credentials:', e.message);
+      return null;
+    } finally {
+      cfCache.pending = null;
+    }
+  })();
+  return cfCache.pending;
+}
+
+async function iceServers() {
   if (process.env.ICE_SERVERS) {
     try {
       return JSON.parse(process.env.ICE_SERVERS);
@@ -23,7 +67,11 @@ function iceServers() {
       console.warn('ICE_SERVERS is not valid JSON, ignoring it');
     }
   }
-  const servers = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+  if (CF_KEY_ID && CF_TOKEN) {
+    const cf = await cloudflareIce();
+    if (cf) return cf;
+  }
+  const servers = [...STUN_DEFAULT];
   if (process.env.TURN_URL) {
     servers.push({
       urls: process.env.TURN_URL.split(',').map((s) => s.trim()),
@@ -32,6 +80,13 @@ function iceServers() {
     });
   }
   return servers;
+}
+
+function turnMode() {
+  if (process.env.ICE_SERVERS) return 'custom ICE_SERVERS';
+  if (CF_KEY_ID && CF_TOKEN) return 'Cloudflare TURN';
+  if (process.env.TURN_URL) return 'TURN_URL';
+  return 'none (direct connections only)';
 }
 
 // ---------- static files ----------
@@ -60,11 +115,20 @@ function send(res, status, body, type = 'text/plain; charset=utf-8') {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname === '/config.json') {
-    return send(res, 200, JSON.stringify({ iceServers: iceServers() }), MIME['.json']);
+    iceServers().then(
+      (ice) => send(res, 200, JSON.stringify({ iceServers: ice }), MIME['.json']),
+      () => send(res, 200, JSON.stringify({ iceServers: STUN_DEFAULT }), MIME['.json'])
+    );
+    return;
   }
   if (url.pathname === '/healthz') return send(res, 200, 'ok');
 
-  let rel = decodeURIComponent(url.pathname);
+  let rel;
+  try {
+    rel = decodeURIComponent(url.pathname);
+  } catch {
+    return send(res, 400, 'Bad request');
+  }
   if (rel === '/' || rel.startsWith('/room/')) rel = '/index.html';
   const file = path.normalize(path.join(PUBLIC_DIR, rel));
   if (!file.startsWith(PUBLIC_DIR + path.sep)) return send(res, 403, 'Forbidden');
@@ -166,4 +230,6 @@ wss.on('close', () => clearInterval(heartbeat));
 
 server.listen(PORT, () => {
   console.log(`Watch Together running on http://localhost:${PORT}`);
+  console.log(`Relay (TURN): ${turnMode()}`);
+  if (CF_KEY_ID && CF_TOKEN) cloudflareIce().then((s) => s && console.log('Cloudflare TURN credentials OK'));
 });
